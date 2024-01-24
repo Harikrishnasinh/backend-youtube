@@ -4,6 +4,8 @@ import { uploadToCloudinary } from "../utils/cloudinary.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { apiResponse } from "../utils/apiResponse.js";
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
+
 // independent method to make the access and refresh token
 const generateAccessTokenAndRefreshToken = async (userId) => {
   // generate refreshToken
@@ -114,7 +116,6 @@ const login = asyncHandler(async (request, response) => {
 });
 
 const loogout = asyncHandler(async (request, response) => {
-  console.log(request.user._id);
   const updateUser = await User.findByIdAndUpdate(
     { _id: request.user._id },
     {
@@ -171,4 +172,188 @@ const refershAccessToken = asyncHandler(async (request, response) => {
     throw new apiError(401, "invalid refresh token");
   }
 });
-export { register, login, loogout, refershAccessToken };
+
+const changeCurrentPassword = asyncHandler(async (request, response) => {
+  try {
+    const { oldPassword, password } = request.body;
+    const user = await User.findById(request.user?._id);
+    if (!user) {
+      throw new apiError(402, "User not valid");
+    }
+    const validatePassword = await user.isPasswordCorrect(oldPassword);
+    if (!validatePassword) throw new apiError(401, "Password not valid");
+    user.password = password;
+    await user.save({ validateBeforeSave: false });
+    return response
+      .status(200)
+      .json(new apiResponse(200, "password updated succesfully"));
+  } catch (error) {
+    throw new apiError(401, error?.message || "something went wrong");
+  }
+});
+
+const currentUser = asyncHandler(async (request, response) => {
+  return response
+    .status(200)
+    .json(new apiResponse(200, "data got succesfully", request.user));
+});
+
+const updateAvatar = asyncHandler(async (request, response) => {
+  const avatarPath = request.file?.path;
+  const avatar = await uploadToCloudinary(avatarPath);
+  const updatedAvatar = await User.findByIdAndUpdate(
+    request.user._id,
+    { $set: { avatar: avatar.url } },
+    { new: true }
+  );
+  if (!updatedAvatar) {
+    throw new apiError(
+      401,
+      "Something went wrong while updating the avatar to cloudinary"
+    );
+  }
+  return response
+    .status(200)
+    .json(new apiResponse(200, "updated succesfully", updatedAvatar));
+});
+
+const updateCoverImage = asyncHandler(async (request, response) => {
+  const coverimagePath = request.file?.path;
+  const coverimage = await uploadToCloudinary(coverimagePath);
+  const updatedCoverImage = await User.findByIdAndUpdate(
+    request.user._id,
+    { $set: { coverimage: coverimage.url } },
+    { new: true }
+  );
+  if (!updatedCoverImage) {
+    throw new apiError(
+      401,
+      "Something went wrong while updating the avatar to cloudinary"
+    );
+  }
+  return response
+    .status(200)
+    .json(new apiResponse(200, "updated succesfully", updatedCoverImage));
+});
+
+const getChannelSub = asyncHandler(async (request, response) => {
+  const { username } = request.params;
+  if (!username?.trim()) {
+    throw new apiError(401, "Username is not proper");
+  }
+  const channel = await User.aggregate([
+    {
+      $match: {
+        username: username?.toLowerCase(),
+      },
+    },
+    {
+      $lookup: {
+        from: "subscribes",
+        localField: "_id",
+        foreignField: "channel",
+        as: "subscribers",
+      },
+    },
+    {
+      $lookup: {
+        from: "subscribes",
+        localField: "_id",
+        foreignField: "subscriber",
+        as: "subscribed",
+      },
+    },
+    {
+      $addFields: {
+        subscribersCount: {
+          $size: "$subscribers",
+        },
+        channelsSubscribedTo: {
+          $size: "$subscribed",
+        },
+        // for button of the subscribe button to hide and show as per subscribe or not
+        isSubscribed: {
+          $cond: {
+            if: { $in: [request.user?._id, "$subscribers.subscriber"] },
+            then: true,
+            else: false,
+          },
+        },
+      },
+    },
+    {
+      $project: {
+        fullname: 1,
+        username: 1,
+        subscribersCount: 1,
+        channelsSubscribedTo: 1,
+        isSubscribed: 1,
+        avatar: 1,
+        coverimage: 1,
+        email: 1,
+      },
+    },
+  ]);
+  response.json(channel);
+  // response.status(200, new apiResponse(200, "done", channel));
+});
+
+const getWatchHistory = asyncHandler(async (request, response) => {
+  const user = await User.aggregate([
+    {
+      $match: {
+        _id: new mongoose.Types.ObjectId(request.user._id),
+      },
+    },
+    {
+      $lookup: {
+        from: "videos",
+        localField: "watchHistory",
+        foreignField: "_id",
+        as: "watchHistory",
+        pipeline: [
+          {
+            $lookup: {
+              from: "users",
+              localField: "owner",
+              foreignField: "_id",
+              as: "owner",
+              pipeline: [
+                {
+                  $project: {
+                    fullName: 1,
+                    username: 1,
+                    avatar: 1,
+                  },
+                },
+              ],
+            },
+          },
+          {
+            $addFields: {
+              owner: {
+                $first: "$owner",
+              },
+            },
+          },
+        ],
+      },
+    },
+  ]);
+  return response
+    .status(200)
+    .json(new apiResponse(200, "done", user[0].WatchHistory));
+});
+
+export {
+  register,
+  login,
+  loogout,
+  refershAccessToken,
+  changeCurrentPassword,
+  currentUser,
+  updateAvatar,
+  updateCoverImage,
+  getChannelSub,
+  getWatchHistory,
+};
