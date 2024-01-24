@@ -1,9 +1,20 @@
 import { Router } from "express";
-import { register } from "../controllers/user.controllers.js";
+import {
+  login,
+  loogout,
+  refershAccessToken,
+  register,
+} from "../controllers/user.controllers.js";
 import { upload } from "../middlewares/multer.middleware.js";
+import { verifyJWT } from "../middlewares/auth.middleware.js";
 const router = Router();
 router
-  .route("/register")
-  .post(upload.fields([{ name: "avatar" }, { name: "coverimage" }]), register);
-
+  .post(
+    "/register",
+    upload.fields([{ name: "avatar" }, { name: "coverimage" }]),
+    register
+  )
+  .post("/login", login)
+  .post("/logout", verifyJWT, loogout)
+  .post("/refresh-token", refershAccessToken);
 export { router };
